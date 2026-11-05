@@ -1,0 +1,17 @@
+{
+  "name": "figma-granskning",
+  "version": "1.0.0",
+  "description": "Granskar Figma-filer: designsystem, tillgänglighet och struktur",
+  "main": "cli/review.js",
+  "scripts": {
+    "build": "node build.js",
+    "review": "node cli/review.js",
+    "test": "node test/render-fixture.js && node test/run-plugin.js && node test/run-ui.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "jspdf": "^2.5.2"
+  }
+}

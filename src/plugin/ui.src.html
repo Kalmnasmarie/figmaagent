@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --bg: var(--figma-color-bg, #fff);
+    --bg2: var(--figma-color-bg-secondary, #f5f5f5);
+    --fg: var(--figma-color-text, #1e1e1e);
+    --muted: var(--figma-color-text-secondary, #757575);
+    --border: var(--figma-color-border, #e6e6e6);
+    --brand: var(--figma-color-bg-brand, #0d99ff);
+    --fel: #d92d20; --varning: #dc6803; --info: #2e90fa;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 12px/1.45 Inter, system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+  header { padding: 12px 14px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--bg); z-index: 1; }
+  h1 { font-size: 13px; margin: 0 0 8px; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  button { font: inherit; border-radius: 6px; padding: 6px 10px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); cursor: pointer; }
+  button.primary { background: var(--brand); color: #fff; border-color: transparent; }
+  button:disabled { opacity: .5; cursor: default; }
+  #status { color: var(--muted); margin-top: 8px; min-height: 18px; }
+  .stats { display: flex; gap: 6px; margin-top: 8px; }
+  .stat { flex: 1; border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
+  .stat b { font-size: 16px; display: block; }
+  .filters { margin-top: 8px; color: var(--muted); }
+  .filters label { margin-right: 8px; white-space: nowrap; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { padding: 9px 14px; border-bottom: 1px solid var(--border); cursor: pointer; }
+  li:hover { background: var(--bg2); }
+  .sev { display: inline-block; font-size: 9px; font-weight: 700; color: #fff; border-radius: 3px; padding: 1px 5px; margin-right: 6px; }
+  .sev.fel { background: var(--fel); } .sev.varning { background: var(--varning); } .sev.info { background: var(--info); }
+  .cat { color: var(--muted); font-size: 11px; }
+  .msg { margin-top: 3px; font-weight: 600; }
+  .sug { margin-top: 2px; }
+  .path { margin-top: 2px; color: var(--muted); font-size: 10.5px; word-break: break-word; }
+  .frame-head { padding: 8px 14px; background: var(--bg2); font-weight: 600; }
+  .empty { padding: 24px 14px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Figma-granskning</h1>
+  <div class="row">
+    <button class="primary" data-scope="selection">Granska markering</button>
+    <button data-scope="page">Granska hela sidan</button>
+    <button id="pdf" disabled>Ladda ner PDF</button>
+  </div>
+  <div id="status"></div>
+  <div id="summary" hidden>
+    <div class="stats">
+      <div class="stat"><b id="n-fel" style="color:var(--fel)">0</b>Fel</div>
+      <div class="stat"><b id="n-varning" style="color:var(--varning)">0</b>Varningar</div>
+      <div class="stat"><b id="n-info" style="color:var(--info)">0</b>Förslag</div>
+    </div>
+    <div class="filters">
+      <label><input type="checkbox" data-cat="designsystem" checked> Designsystem</label>
+      <label><input type="checkbox" data-cat="tillganglighet" checked> Tillgänglighet</label>
+      <label><input type="checkbox" data-cat="struktur" checked> Struktur</label>
+      <label><input type="checkbox" data-sev="info" checked> Visa förslag</label>
+    </div>
+  </div>
+</header>
+<ul id="list"><li class="empty">Markera frames och klicka på Granska, eller granska hela sidan.</li></ul>
+
+<script>/*JSPDF*/</script>
+<script>/*REPORT*/</script>
+<script>
+var state = null;
+var $ = function (id) { return document.getElementById(id); };
+var CAT = { designsystem: 'Designsystem', tillganglighet: 'Tillgänglighet', struktur: 'Struktur' };
+var SEV = { fel: 'FEL', varning: 'VARNING', info: 'INFO' };
+
+function post(msg) { parent.postMessage({ pluginMessage: msg }, '*'); }
+
+document.querySelectorAll('[data-scope]').forEach(function (b) {
+  b.onclick = function () { setStatus('Granskar…'); post({ type: 'run', scope: b.dataset.scope }); };
+});
+document.querySelectorAll('.filters input').forEach(function (i) { i.onchange = render; });
+
+function setStatus(t) { $('status').textContent = t || ''; }
+
+function visibleIssues() {
+  if (!state) return [];
+  var cats = {}, showInfo = document.querySelector('[data-sev=info]').checked;
+  document.querySelectorAll('[data-cat]').forEach(function (i) { cats[i.dataset.cat] = i.checked; });
+  return state.issues.filter(function (i) { return cats[i.category] && (showInfo || i.severity !== 'info'); });
+}
+
+function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+
+function render() {
+  var list = $('list');
+  var issues = visibleIssues();
+  if (!issues.length) { list.innerHTML = '<li class="empty">Inga anmärkningar med valda filter. Snyggt!</li>'; return; }
+  var html = '';
+  state.frames.forEach(function (f) {
+    var fi = issues.filter(function (i) { return i.frameId === f.id; });
+    if (!fi.length) return;
+    html += '<li class="frame-head" data-node="' + f.id + '">' + esc(f.name) + ' · ' + fi.length + '</li>';
+    fi.forEach(function (i) {
+      html += '<li data-node="' + i.nodeId + '"><span class="sev ' + i.severity + '">' + SEV[i.severity] + '</span>' +
+        '<span class="cat">' + CAT[i.category] + '</span>' +
+        '<div class="msg">' + esc(i.message) + '</div><div class="sug">' + esc(i.suggestion) + '</div>' +
+        '<div class="path">' + esc(i.path) + '</div></li>';
+    });
+  });
+  list.innerHTML = html;
+  list.querySelectorAll('[data-node]').forEach(function (li) {
+    li.onclick = function () { post({ type: 'select', nodeId: li.dataset.node }); };
+  });
+}
+
+function toDataUrl(bytes) {
+  var bin = '', chunk = 0x8000;
+  for (var i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  return 'data:image/png;base64,' + btoa(bin);
+}
+
+$('pdf').onclick = function () {
+  var issues = visibleIssues();
+  var ids = state.frames.filter(function (f) { return issues.some(function (i) { return i.frameId === f.id; }); })
+    .map(function (f) { return f.id; });
+  $('pdf').disabled = true;
+  post({ type: 'export', frameIds: ids });
+};
+
+function makePdf(images) {
+  setStatus('Skapar PDF…');
+  var issues = visibleIssues().map(function (i) { return Object.assign({}, i); });
+  var stats = { nodes: state.stats.nodes, frames: state.stats.frames, fel: 0, varning: 0, info: 0, perCategory: {} };
+  issues.forEach(function (i) { stats[i.severity]++; stats.perCategory[i.category] = (stats.perCategory[i.category] || 0) + 1; });
+  var frames = state.frames.map(function (f) {
+    return { id: f.id, name: f.name, bbox: f.bbox, image: images[f.id] ? toDataUrl(images[f.id]) : null };
+  });
+  var doc = buildReport(window.jspdf.jsPDF, { fileName: state.fileName, createdAt: new Date(), stats: stats, issues: issues, frames: frames });
+  var name = 'granskning-' + new Date().toISOString().slice(0, 10) + '.pdf';
+  var url = URL.createObjectURL(doc.output('blob'));
+  var a = document.createElement('a');
+  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+  setStatus('PDF sparad: ' + name);
+  $('pdf').disabled = false;
+}
+
+onmessage = function (e) {
+  var msg = e.data.pluginMessage;
+  if (!msg) return;
+  if (msg.type === 'progress') setStatus(msg.message);
+  if (msg.type === 'error') { setStatus(msg.message); $('pdf').disabled = !state; }
+  if (msg.type === 'result') {
+    state = msg;
+    ['fel', 'varning', 'info'].forEach(function (s) { $('n-' + s).textContent = msg.stats[s]; });
+    $('summary').hidden = false;
+    $('pdf').disabled = !msg.issues.length;
+    setStatus(msg.stats.nodes + ' lager i ' + msg.stats.frames + ' frames granskade.');
+    render();
+  }
+  if (msg.type === 'images') {
+    try { makePdf(msg.images); } catch (err) { setStatus('Kunde inte skapa PDF: ' + err.message); $('pdf').disabled = false; }
+  }
+};
+</script>
+</body>
+</html>
